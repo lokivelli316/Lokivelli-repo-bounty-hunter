@@ -10,11 +10,18 @@ DASHBOARD_URL="http://127.0.0.1:8765/api/dashboard"
 
 printf '\n== Lokivelli Radar Termux installer ==\n'
 pkg install -y python git termux-services curl
+export SVDIR="$PREFIX/var/service"
+export LOGDIR="$PREFIX/var/log"
+if [ -f "$PREFIX/etc/profile.d/start-services.sh" ]; then
+  # Same-session installs do not get the profile hook until the next shell.
+  # Source it now so runit has the same environment Termux documents.
+  . "$PREFIX/etc/profile.d/start-services.sh"
+fi
 mkdir -p "$APP_HOME" "$APP_HOME/logs" "$APP_HOME/var"
 
 python -m venv "$VENV"
 "$VENV/bin/python" -m pip install --upgrade pip setuptools wheel
-"$VENV/bin/python" -m pip install -e "$ROOT"
+"$VENV/bin/python" -m pip install -e "$ROOT" pytest
 "$VENV/bin/lokivelli-radar" --home "$APP_HOME" manuals >"$APP_HOME/var/install-manuals.json"
 
 mkdir -p "$SERVICE_ROOT/lokivelli-radar" "$SERVICE_ROOT/lokivelli-radar-scheduler"
@@ -34,8 +41,10 @@ chmod +x "$SERVICE_ROOT/lokivelli-radar/run" "$SERVICE_ROOT/lokivelli-radar-sche
 
 "$VENV/bin/lokivelli-radar" --home "$APP_HOME" register-runtime "$ROOT"   --port 8765   --health "$HEALTH_URL"   --service-name lokivelli-radar >"$APP_HOME/var/install-register-runtime.json"
 
-sv up lokivelli-radar >/dev/null 2>&1 || true
-sv up lokivelli-radar-scheduler >/dev/null 2>&1 || true
+sv-enable lokivelli-radar >/dev/null 2>&1 || true
+sv-enable lokivelli-radar-scheduler >/dev/null 2>&1 || true
+sv up "$SVDIR/lokivelli-radar" >/dev/null 2>&1 || true
+sv up "$SVDIR/lokivelli-radar-scheduler" >/dev/null 2>&1 || true
 
 for _ in $(seq 1 12); do
   if curl -fsS "$HEALTH_URL" >"$APP_HOME/var/install-health.json" 2>/dev/null; then

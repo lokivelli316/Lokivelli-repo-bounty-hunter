@@ -8,7 +8,8 @@ DEFAULT_CONFIG = Path(__file__).resolve().parents[1] / "config" / "default.json"
 DIRS = [
     "app", "config", "db", "evidence/github", "evidence/trending", "evidence/termux",
     "evidence/receipts", "manuals/owned-termux", "manuals/favorites", "manuals/forks",
-    "manuals/trending", "manuals/runtime", "manuals/failure-atlas", "exports", "backups", "logs", "bin"
+    "manuals/trending", "manuals/runtime", "manuals/failure-atlas", "exports", "backups", "logs", "bin",
+    "preservation/mirrors", "preservation/bundles", "preservation/releases", "preservation/wiki"
 ]
 
 def ensure_layout(home: Path = APP_HOME) -> Path:

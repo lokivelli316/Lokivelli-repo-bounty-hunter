@@ -106,12 +106,20 @@ def gui_trending(period:str,language:str,home:Path,refresh=True):
     result=acquire(period,language or None,home) if refresh else {"status":"OK","cached":True}
     snap=dashboard(home,period,language)
     lane=snap["trending_language"] if language else snap["trending_all"]
+    items=[]
+    for row in lane.get("items",[]):
+        item=_repo_payload(
+            row,
+            starred=bool(row.get("already_starred")),
+            owned=bool(row.get("already_owned")),
+        )
+        items.append(item)
     payload={
         "status":result.get("status","OK"),
         "period":period,
         "language":language,
-        "repositories":lane.get("items",[]),
-        "items":lane.get("items",[]),
+        "repositories":items,
+        "items":items,
         "source":lane.get("source"),
         "refresh":result,
     }
@@ -372,6 +380,12 @@ class Handler(BaseHTTPRequestHandler):
                 save_config(cfg,home)
                 write_receipt("config.languages.update",result={"count":len(cfg["languages"])},home=home)
                 return self.send_json({"status":"OK","languages":cfg["languages"]})
+            if u.path=="/api/config/runtime-roots":
+                cfg=load_config(home)
+                cfg["termux_roots"]=[str(x) for x in b.get("roots",[])]
+                save_config(cfg,home)
+                write_receipt("config.runtime_roots.update",result={"count":len(cfg["termux_roots"])},home=home)
+                return self.send_json({"status":"OK","roots":cfg["termux_roots"]})
             if u.path=="/api/workaround":
                 return self.send_json(record_workaround(
                     b["original_target"],

@@ -25,8 +25,8 @@ if command -v sv >/dev/null 2>&1; then
   sv status "$SVDIR/lokivelli-radar-scheduler" 2>/dev/null || true
 fi
 
-for pf in "$APP_HOME/var/http-install-fallback.pid" "$APP_HOME/var/scheduler-install-fallback.pid"; do
+for pf in "$APP_HOME/var/http-install-fallback.pid" "$APP_HOME/var/scheduler-install-fallback.pid" "$APP_HOME/var/http-start-fallback.pid" "$APP_HOME/var/scheduler-start-fallback.pid"; do
   if [ -s "$pf" ] && kill -0 "$(cat "$pf")" 2>/dev/null; then
     printf 'FALLBACK_PROCESS=RUNNING pid=%s file=%s\n' "$(cat "$pf")" "$pf"
   fi
-fi
+done

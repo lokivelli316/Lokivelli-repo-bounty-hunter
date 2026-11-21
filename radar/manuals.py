@@ -51,6 +51,13 @@ def repository_card_from_row(con,row:dict,home:Path):
     card["manual_notes"]=notes
     card["evidence_refs"]=[x["source_hash"] for x in readmes]+trendrefs
     card["receipt_refs"]=_receipt_refs(full,home)
+    if row.get("repo_id") is not None:
+        preservation=con.execute("SELECT * FROM preservation_state WHERE repo_id=?",(row["repo_id"],)).fetchone()
+        if preservation:
+            pd=dict(preservation)
+            pd["requested"]=_jsonish(pd.pop("requested_json",None),[])
+            pd["verification"]=_jsonish(pd.pop("verification_json",None),{})
+            card["preservation_state"]=pd
     return card
 
 def get_repository_card(full_name:str,home:Path=APP_HOME):

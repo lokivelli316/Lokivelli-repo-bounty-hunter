@@ -281,12 +281,65 @@ def preserve(full_name: str, actions: list[str] | None = None, home: Path = APP_
         return {"status": "HOLD", "error": "no preservation actions selected", "full_name": full_name}
 
     gh = GitHubClient(home)
-    detail = gh.repository_detail(full_name)
-    clone_url = detail.get("clone_url") or f"https://github.com/{full_name}.git"
     root, secondaries, cfg = _roots(home)
     slug = _slug(full_name)
     mirror_path = root / "mirrors" / f"{slug}.git"
     bundle_path = root / "bundles" / f"{slug}.bundle"
+    try:
+        detail = gh.repository_detail(full_name)
+        clone_url = detail.get("clone_url") or f"https://github.com/{full_name}.git"
+    except Exception as source_error:
+        existing = {
+            "mirror": str(mirror_path) if mirror_path.exists() else None,
+            "bundle": str(bundle_path) if bundle_path.exists() else None,
+            "bundle_sha256": sha256_file(bundle_path) if bundle_path.exists() else None,
+        }
+        status = "HOLD"
+        now = utcnow()
+        with connect(home) as con:
+            previous = con.execute("SELECT * FROM preservation_state WHERE repo_id=?", (row["repo_id"],)).fetchone()
+            con.execute(
+                """INSERT INTO preservation_state(repo_id,requested_json,status,mirror_path,bundle_path,last_verified_at,source_present,verification_json)
+                   VALUES(?,?,?,?,?,?,?,?)
+                   ON CONFLICT(repo_id) DO UPDATE SET status=excluded.status,
+                     mirror_path=COALESCE(excluded.mirror_path,preservation_state.mirror_path),
+                     bundle_path=COALESCE(excluded.bundle_path,preservation_state.bundle_path),
+                     last_verified_at=excluded.last_verified_at,source_present=0,verification_json=excluded.verification_json""",
+                (
+                    row["repo_id"],
+                    json.dumps(actions),
+                    status,
+                    existing["mirror"],
+                    existing["bundle"],
+                    now,
+                    0,
+                    json.dumps({"source_error": str(source_error), "existing_recovery": existing}, sort_keys=True),
+                ),
+            )
+            emit_event(
+                con,
+                "UPSTREAM MISSING / PRESERVED COPY AVAILABLE" if existing["mirror"] or existing["bundle"] else "UPSTREAM MISSING / NO PRESERVED COPY",
+                full_name,
+                dict(previous) if previous else None,
+                {"source_present": False, "existing_recovery": existing},
+            )
+        receipt = write_receipt(
+            "preservation.source_missing",
+            inputs={"full_name": full_name, "actions": actions},
+            status=status,
+            result={"source_present": False, "existing_recovery": existing},
+            errors=[str(source_error)],
+            home=home,
+        )
+        return {
+            "status": status,
+            "full_name": full_name,
+            "source_present": False,
+            "error": str(source_error),
+            "existing_recovery": existing,
+            "receipt": receipt,
+        }
+
     results = {}
     errors = []
 

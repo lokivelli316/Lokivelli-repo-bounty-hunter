@@ -39,7 +39,7 @@ def schedule_due(spec:str,now:datetime):
 def sweep_periods_for_language(home:Path,language:str|None):
     return [acquire(period,language,home) for period in ('daily','weekly','monthly')]
 
-def run_once(home:Path=APP_HOME,full_languages=False):
+def run_once(home:Path=APP_HOME,full_languages=True):
     cfg=load_config(home); results={"github":pull_inventory(home),"trending":[],"termux":discover(home)}
     results['trending'] += sweep_periods_for_language(home,None)
     langs=[x for x in cfg.get('languages',[]) if x.get('enabled') and (full_languages or x.get('pinned'))]
@@ -53,11 +53,12 @@ def run_once(home:Path=APP_HOME,full_languages=False):
 def daemon(home:Path=APP_HOME,interval_seconds=30):
     executed=set()
     while True:
-        now=datetime.now(timezone.utc).replace(second=0,microsecond=0); cfg=load_config(home); minute_key=now.isoformat()
+        now=datetime.now(timezone.utc).replace(second=0,microsecond=0); cfg=load_config(home); minute_key=now.isoformat(); polling=cfg.get('polling',{})
         jobs=[]
-        if schedule_due(cfg.get('polling',{}).get('github_inventory','daily'),now): jobs.append(('github',None))
-        if schedule_due(cfg.get('polling',{}).get('trending_all','daily'),now): jobs.append(('trending-all',None))
-        if schedule_due(cfg.get('polling',{}).get('manual_delta','daily'),now): jobs.append(('manuals',None))
+        if schedule_due(polling.get('github_inventory','daily'),now): jobs.append(('github',None))
+        if schedule_due(polling.get('trending_all','daily'),now): jobs.append(('trending-all',None))
+        if schedule_due(polling.get('manual_delta','daily'),now): jobs.append(('manuals',None))
+        if schedule_due(polling.get('complete_language_sweep','weekly'),now): jobs.append(('complete-language-sweep',None))
         for x in cfg.get('languages',[]):
             if x.get('enabled') and schedule_due(x.get('polling','weekly'),now): jobs.append(('language',x['slug']))
         for job,arg in jobs:
@@ -68,6 +69,9 @@ def daemon(home:Path=APP_HOME,interval_seconds=30):
                 elif job=='trending-all': sweep_periods_for_language(home,None)
                 elif job=='manuals': generate_all(home)
                 elif job=='language': sweep_periods_for_language(home,arg)
+                elif job=='complete-language-sweep':
+                    for x in cfg.get('languages',[]):
+                        if x.get('enabled'): sweep_periods_for_language(home,x['slug'])
             finally: executed.add(key)
         if now.hour==0 and now.minute==0: executed={x for x in executed if x[0].startswith(now.strftime('%Y-%m-%d'))}
         time.sleep(interval_seconds)

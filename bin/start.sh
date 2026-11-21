@@ -4,12 +4,14 @@ set -euo pipefail
 APP_HOME="${LOKIVELLI_RADAR_HOME:-$HOME/lokivelli-radar}"
 VENV="$APP_HOME/.venv"
 HEALTH_URL="http://127.0.0.1:8765/healthz"
+export SVDIR="$PREFIX/var/service"
+export LOGDIR="$PREFIX/var/log"
 
 mkdir -p "$APP_HOME/logs" "$APP_HOME/var"
 
 if command -v sv >/dev/null 2>&1; then
-  sv up lokivelli-radar >/dev/null 2>&1 || true
-  sv up lokivelli-radar-scheduler >/dev/null 2>&1 || true
+  sv up "$SVDIR/lokivelli-radar" >/dev/null 2>&1 || true
+  sv up "$SVDIR/lokivelli-radar-scheduler" >/dev/null 2>&1 || true
 fi
 
 for _ in $(seq 1 5); do

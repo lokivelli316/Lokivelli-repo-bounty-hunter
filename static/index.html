@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>GitHub Radar / Termux Manual Forge</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div><h1>GITHUB RADAR / TERMUX MANUAL FORGE</h1><div id="healthline" class="healthline">Loading evidence…</div></div>
+  <div class="toolbar"><button id="refreshAll" class="primary">REFRESH EVERYTHING</button><button id="exportAll" class="primary">EXPORT EVERYTHING</button></div>
+</header>
+<main>
+  <section class="searchbar panel"><label for="globalSearch">GLOBAL SEARCH</label><div class="searchrow"><input id="globalSearch" type="search" autocomplete="off" placeholder="Trending, Stars, owned, forks, runtime, receipts, languages, topics, README findings"><button id="searchBtn">SEARCH</button></div><div id="searchResults" class="results"></div></section>
+  <section class="panel" id="trendingPanel">
+    <div class="panelhead"><h2>ALL TRENDING</h2><div class="seg" role="group" aria-label="Trending period"><button data-period="daily" class="active">Daily</button><button data-period="weekly">Week</button><button data-period="monthly">Month</button></div></div>
+    <div id="trendSource" class="source"></div><div id="allTrending" class="cards"></div>
+  </section>
+  <section class="panel" id="languagePanel">
+    <div class="panelhead"><h2>LANGUAGE RADAR</h2><button id="manageLang">MANAGE LANGUAGES</button></div>
+    <div id="languageChips" class="chips"></div><div id="languageTrending" class="cards"></div>
+    <div id="languageEditor" class="editor hidden"><h3>Language roster</h3><div id="languageRows"></div><div class="searchrow"><input id="newLangName" placeholder="Display name"><input id="newLangSlug" placeholder="GitHub slug"><button id="addLang">ADD</button></div><button id="saveLang">SAVE ROSTER</button></div>
+  </section>
+  <section class="panel" id="collectionPanel">
+    <div class="panelhead"><h2>MY COLLECTION</h2><button id="githubPull">REFRESH GITHUB INVENTORY</button></div>
+    <div class="metrics"><div><b id="starsCount">0</b><span>Stars</span></div><div><b id="ownedCount">0</b><span>Owned</span></div><div><b id="forkCount">0</b><span>Forks</span></div><div><b id="deltaCount">0</b><span>New Delta</span></div></div>
+    <div id="deltas" class="eventlist"></div>
+  </section>
+  <section class="panel" id="runtimePanel">
+    <div class="panelhead"><h2>TERMUX LIVE STATE</h2><button id="discoverRuntime">DISCOVER / VERIFY</button></div>
+    <div class="metrics"><div><b id="runtimeCount">0</b><span>Discovered</span></div><div><b id="liveCount">0</b><span>LIVE</span></div><div><b id="holdCount">0</b><span>HOLD / DEGRADED</span></div></div>
+    <div id="runtimeCards" class="cards"></div>
+  </section>
+  <section class="panel" id="manualPanel">
+    <div class="panelhead"><h2>MANUAL FORGE</h2><div><button id="generateManuals">REFRESH MANUALS</button><button id="showReceipts">RECEIPTS</button></div></div>
+    <div id="manualCards" class="cards compact"></div><div id="receiptView" class="results hidden"></div>
+  </section>
+</main>
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="/app.js"></script>
+</body></html>

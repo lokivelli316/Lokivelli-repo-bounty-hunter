@@ -16,5 +16,6 @@ jobs:
       - run: python -m pip install -r requirements.txt pytest
       - run: PYTHONPATH=. python -m compileall -q radar
       - run: node --check static/wiring.js
+      - run: bash -n bin/install-termux.sh bin/start.sh bin/termux-health.sh bin/backup.sh
       - run: PYTHONPATH=. pytest -q
       - run: PYTHONPATH=. python -m radar.cli --help

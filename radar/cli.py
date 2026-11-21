@@ -13,6 +13,7 @@ from .history import import_predecessor
 from .update import backup_state, check_update, migrate_database, verify_source, upgrade, rollback
 from .failure import record_workaround
 from .acceptance import run_acceptance, save_device_acceptance
+from .preservation import preserve, preserve_planned, preservation_status, set_preservation_plan
 
 def out(x): print(json.dumps(x,indent=2,default=str))
 def main():
@@ -34,6 +35,10 @@ def main():
     rs=s.add_parser("restore"); rs.add_argument("zip",type=Path)
     ac=s.add_parser("acceptance"); ac.add_argument("--no-network-refresh",action="store_true"); ac.add_argument("--source-dir",type=Path)
     da=s.add_parser("device-acceptance"); da.add_argument("record",type=Path,help="JSON booleans for portrait/landscape/touch/status/browser verification")
+    pp=s.add_parser("preserve-plan"); pp.add_argument("full_name"); pp.add_argument("actions",nargs="*")
+    pr=s.add_parser("preserve"); pr.add_argument("full_name"); pr.add_argument("--action",action="append",dest="actions")
+    ps=s.add_parser("preserve-status"); ps.add_argument("full_name")
+    s.add_parser("preserve-sweep")
     a=p.parse_args(); ensure_layout(a.home)
     if a.cmd=="serve": return serve(a.home,a.bind,a.port)
     if a.cmd=="refresh": return out(run_once(a.home,not a.priority_only))
@@ -51,6 +56,10 @@ def main():
     if a.cmd=="import-predecessor": return out(import_predecessor(a.path,a.manual_key,a.home))
     if a.cmd=="acceptance": return out(run_acceptance(a.home,a.source_dir,not a.no_network_refresh))
     if a.cmd=="device-acceptance": return out(save_device_acceptance(json.loads(a.record.read_text()),a.home))
+    if a.cmd=="preserve-plan": return out(set_preservation_plan(a.full_name,a.actions,a.home))
+    if a.cmd=="preserve": return out(preserve(a.full_name,a.actions,a.home))
+    if a.cmd=="preserve-status": return out(preservation_status(a.full_name,a.home))
+    if a.cmd=="preserve-sweep": return out(preserve_planned(a.home))
     if a.cmd=="update":
         if a.action=="check": return out(check_update(a.source_dir))
         if a.action=="backup": return out(backup_state(a.home))

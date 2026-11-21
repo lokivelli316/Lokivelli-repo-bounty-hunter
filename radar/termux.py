@@ -53,6 +53,13 @@ def health_probe(url:str|None,timeout=3):
     except Exception:
         return "HOLD"
 
+def service_state(service_name:str|None):
+    if not service_name: return "UNKNOWN"
+    rc,out,err=_run(["sv","status",service_name])
+    if rc==0:
+        return out or "UP"
+    return "UNKNOWN" if rc==127 else (err or out or "HOLD")
+
 def _candidate_dirs(root:Path,max_depth=4):
     if not root.exists() or not root.is_dir(): return
     root_parts=len(root.parts)
@@ -64,15 +71,28 @@ def _candidate_dirs(root:Path,max_depth=4):
             if ".git" in dirs: dirs[:] = [d for d in dirs if d != ".git"]
         if depth >= max_depth: dirs[:] = []
 
-def discover(home:Path=APP_HOME):
+def _resolve_roots(configured):
+    roots=[]
+    for raw in configured or []:
+        expanded=os.path.expandvars(str(raw))
+        p=Path(expanded).expanduser()
+        try:
+            p=p.resolve()
+        except Exception:
+            pass
+        roots.append(p)
+    return roots
+
+def discover(home:Path=APP_HOME, roots=None):
     cfg=load_config(home); now=utcnow(); found={}; timeout=cfg.get("health_timeout_seconds",3)
+    configured_roots=roots if roots is not None else cfg.get("termux_roots",[])
+    resolved_roots=_resolve_roots(configured_roots)
     registry_file=home/"config"/"runtime_registry.json"
     registry={}
     if registry_file.exists():
         try: registry=json.loads(registry_file.read_text())
         except Exception: registry={}
-    for root_s in cfg.get("termux_roots",[]):
-        root=Path(root_s)
+    for root in resolved_roots:
         for path in _candidate_dirs(root) or []:
             key=str(path.resolve())
             if key in found: continue
@@ -81,14 +101,16 @@ def discover(home:Path=APP_HOME):
             hurl=reg.get("health_endpoint")
             hstate=health_probe(hurl,timeout)
             pstate=process_state(path)
+            svc=service_state(reg.get("service_name")) if reg.get("service_name") else reg.get("service_manager_state","UNKNOWN")
             phone_status="LIVE" if hstate=="LIVE" else ("DISCOVERED" if pstate in {"RUNNING","NOT_SEEN"} else "UNKNOWN")
+            last_launch=now if hstate=="LIVE" else reg.get("last_successful_launch")
+            last_op="health_probe:LIVE" if hstate=="LIVE" else reg.get("last_verified_operation")
             found[key]={
                 "path":key,**gi,"runtime_language":detect_language(path),"build_presence":build_presence(path),
                 "runtime_port":reg.get("runtime_port"),"process_state":pstate,"health_endpoint":hurl,"health_state":hstate,
-                "service_manager_state":reg.get("service_manager_state","UNKNOWN"),"tunnel_state":reg.get("tunnel_state","UNKNOWN"),
+                "service_manager_state":svc,"tunnel_state":reg.get("tunnel_state","UNKNOWN"),
                 "source_status":reg.get("source_status","SOURCE_PRESENT"),"phone_status":phone_status,
-                "last_successful_launch":reg.get("last_successful_launch"),"last_verified_operation":reg.get("last_verified_operation"),
-                "probed_at":now,
+                "last_successful_launch":last_launch,"last_verified_operation":last_op,"probed_at":now,
             }
     with connect(home) as con:
         previous={r["path"]:dict(r) for r in con.execute("SELECT * FROM runtime_current")}
@@ -101,17 +123,58 @@ def discover(home:Path=APP_HOME):
             con.execute(f"INSERT OR REPLACE INTO runtime_current({','.join(cols)}) VALUES({','.join('?' for _ in cols)})",tuple(rec[c] for c in cols))
         for key,old in previous.items():
             if key not in found:
-                emit_event(con,"PHONE INSTALL MISSING",key,old,None)
-    receipt=write_receipt("termux.discovery",inputs={"roots":cfg.get("termux_roots",[])},source="local Termux filesystem",result={"discovered":len(found)},home=home)
-    return {"status":"OK","discovered":len(found),"items":list(found.values()),"receipt":receipt}
+                missing={**old,"process_state":"MISSING","health_state":"HOLD","phone_status":"HOLD","probed_at":now}
+                con.execute("UPDATE runtime_current SET process_state='MISSING',health_state='HOLD',phone_status='HOLD',probed_at=? WHERE path=?",(now,key))
+                emit_event(con,"PHONE INSTALL MISSING",key,old,missing)
+    live=sum(1 for r in found.values() if r["health_state"]=="LIVE")
+    health_receipt=write_receipt(
+        "runtime.health",
+        inputs={"runtime_count":len(found)},
+        source="local Termux runtime probes",
+        result={
+            "live":live,
+            "hold":sum(1 for r in found.values() if r["health_state"]=="HOLD"),
+            "unknown":sum(1 for r in found.values() if r["health_state"]=="UNKNOWN"),
+        },
+        home=home,
+    )
+    receipt=write_receipt(
+        "termux.discovery",
+        inputs={"roots":[str(x) for x in resolved_roots]},
+        source="local Termux filesystem",
+        result={"discovered":len(found),"runtime_health_receipt":health_receipt["receipt_id"]},
+        home=home,
+    )
+    return {"status":"OK","discovered":len(found),"projects":list(found.values()),"items":list(found.values()),"receipt":receipt}
 
-def register_runtime(path:str, runtime_port=None, health_endpoint=None, source_status="SOURCE_PRESENT", phone_status="DISCOVERED", home:Path=APP_HOME):
+def register_runtime(path:str, runtime_port=None, health_endpoint=None, source_status="SOURCE_PRESENT", phone_status="DISCOVERED", service_name=None, home:Path=APP_HOME):
     cfg_path=home/"config"/"runtime_registry.json"; cfg_path.parent.mkdir(parents=True,exist_ok=True)
     try: reg=json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
     except Exception: reg={}
     key=str(Path(path).expanduser().resolve())
     old=reg.get(key,{})
-    reg[key]={**old,"runtime_port":runtime_port,"health_endpoint":health_endpoint,"source_status":source_status,"phone_status":phone_status}
-    tmp=cfg_path.with_suffix('.tmp'); tmp.write_text(json.dumps(reg,indent=2,sort_keys=True)); os.replace(tmp,cfg_path)
+    reg[key]={**old,"runtime_port":runtime_port,"health_endpoint":health_endpoint,"source_status":source_status,"phone_status":phone_status,"service_name":service_name or old.get("service_name")}
+    tmp=cfg_path.with_suffix(".tmp"); tmp.write_text(json.dumps(reg,indent=2,sort_keys=True)); os.replace(tmp,cfg_path)
     receipt=write_receipt("runtime.register",inputs={"path":key},result=reg[key],home=home)
     return {"status":"OK","path":key,"registry":reg[key],"receipt":receipt}
+
+def transition_runtime(path:str, phone_status:str, last_verified_operation=None, home:Path=APP_HOME):
+    allowed={"UNKNOWN","DISCOVERED","INSTALLING","CONFIGURING","WIRING","AUTHENTICATING","VERIFYING","LIVE","DEGRADED","HOLD","REPAIRING","RETRYING","BYPASS_VERIFYING","BYPASS_LIVE"}
+    if phone_status not in allowed:
+        return {"status":"HOLD","error":f"invalid phone status {phone_status}"}
+    if phone_status in {"STAGED","UNCONFIGURED"}:
+        return {"status":"HOLD","error":f"{phone_status} cannot be accepted as a completed phone deployment state"}
+    key=str(Path(path).expanduser().resolve()); now=utcnow()
+    with connect(home) as con:
+        row=con.execute("SELECT * FROM runtime_current WHERE path=?",(key,)).fetchone()
+        if not row: return {"status":"HOLD","error":"runtime path not discovered"}
+        old=dict(row)
+        last_launch=now if phone_status in {"LIVE","BYPASS_LIVE"} else old.get("last_successful_launch")
+        con.execute(
+            "UPDATE runtime_current SET phone_status=?,last_successful_launch=?,last_verified_operation=?,probed_at=? WHERE path=?",
+            (phone_status,last_launch,last_verified_operation or old.get("last_verified_operation"),now,key),
+        )
+        current={**old,"phone_status":phone_status,"last_successful_launch":last_launch,"last_verified_operation":last_verified_operation or old.get("last_verified_operation"),"probed_at":now}
+        emit_event(con,"RUNTIME STATE CHANGE",key,old,current)
+    receipt=write_receipt("runtime.transition",inputs={"path":key},result=current,home=home)
+    return {"status":"OK","runtime":current,"receipt":receipt}

@@ -7,89 +7,438 @@ from .config import APP_HOME, load_config, save_config, ensure_layout
 from .dashboard import dashboard, search
 from .github_client import pull_inventory, set_star, audit_readme
 from .trending import acquire, sweep
-from .termux import discover, register_runtime
-from .manuals import generate_all
+from .termux import discover, register_runtime, transition_runtime
+from .manuals import generate_all, get_repository_card
 from .exporter import export_everything
 from .scheduler import run_once
 from .receipts import utcnow, write_receipt
 from .failure import record_workaround
 from .history import import_predecessor
-from .update import backup_state, check_update, verify_source, upgrade, rollback
+from .update import backup_state, check_update, migrate_database, verify_source, upgrade, rollback
+from .acceptance import run_acceptance, save_device_acceptance
 from .db import connect
 
 STATIC=Path(__file__).resolve().parents[1]/"static"
+GUI_MANUAL_ALIASES={
+    "owned":"owned-termux",
+    "owned-termux":"owned-termux",
+    "favorites":"favorites",
+    "forks":"forks",
+    "trending":"trending",
+    "runtime":"runtime",
+    "bypass":"failure-atlas",
+    "failure-atlas":"failure-atlas",
+}
+MANUAL_FORMATS={"html","pdf","md","json","csv"}
 
-def _json_bytes(obj): return json.dumps(obj,ensure_ascii=False,default=str).encode()
+def _json_bytes(obj):
+    return json.dumps(obj,ensure_ascii=False,default=str).encode()
+
+def _repo_payload(row, *, starred=False, owned=False):
+    d=dict(row)
+    full=d.get("full_name") or ""
+    d["language"]=d.get("primary_language")
+    d["html_url"]=f"https://github.com/{full}" if full else None
+    d["starred"]=bool(starred or d.get("star_position_current"))
+    d["owned"]=bool(owned or d.get("ownership")=="owned")
+    if "stars" not in d:
+        d["stars"]=d.get("total_stars")
+    return d
+
+def gui_inventory(home:Path):
+    with connect(home) as con:
+        stars=[
+            _repo_payload(r,starred=True,owned=(r["ownership"]=="owned"))
+            for r in con.execute(
+                """SELECT r.*,s.star_position_current,s.starred_at,s.last_seen_in_stars
+                FROM stars_current s JOIN repositories r ON r.repo_id=s.repo_id
+                ORDER BY s.star_position_current"""
+            )
+        ]
+        owned=[
+            _repo_payload(r,starred=bool(r["star_position_current"]),owned=True)
+            for r in con.execute(
+                """SELECT r.*,s.star_position_current,s.starred_at
+                FROM repositories r LEFT JOIN stars_current s ON s.repo_id=r.repo_id
+                WHERE r.ownership='owned' AND r.fork=0 AND r.github_present=1
+                ORDER BY r.full_name"""
+            )
+        ]
+        forks=[
+            _repo_payload(r,starred=bool(r["star_position_current"]),owned=True)
+            for r in con.execute(
+                """SELECT r.*,s.star_position_current,s.starred_at,
+                f.upstream_status,f.local_modifications,f.adoption_state
+                FROM repositories r
+                LEFT JOIN stars_current s ON s.repo_id=r.repo_id
+                LEFT JOIN fork_state f ON f.repo_id=r.repo_id
+                WHERE r.ownership='owned' AND r.fork=1 AND r.github_present=1
+                ORDER BY r.full_name"""
+            )
+        ]
+        events=[dict(r) for r in con.execute("SELECT * FROM events ORDER BY event_id DESC LIMIT 100")]
+    delta=[]
+    for e in events:
+        delta.append({
+            "full_name":e.get("object_key"),
+            "description":e.get("event_type"),
+            "language":"EVENT",
+            "event_type":e.get("event_type"),
+            "at":e.get("at"),
+            "evidence_ref":e.get("evidence_ref"),
+            "html_url":f"https://github.com/{e.get('object_key')}" if "/" in str(e.get("object_key") or "") else None,
+        })
+    return {
+        "status":"OK",
+        "stars":stars,
+        "owned":owned,
+        "forks":forks,
+        "delta":delta,
+        "snapshot":{
+            "stars":len(stars),
+            "repos":len(owned)+len(forks),
+            "starDelta":sum(1 for x in events if x.get("event_type") in {"NEW STAR","REMOVED STAR"}),
+            "captured":utcnow(),
+        },
+    }
+
+def gui_trending(period:str,language:str,home:Path,refresh=True):
+    result=acquire(period,language or None,home) if refresh else {"status":"OK","cached":True}
+    snap=dashboard(home,period,language)
+    lane=snap["trending_language"] if language else snap["trending_all"]
+    items=[]
+    for row in lane.get("items",[]):
+        item=_repo_payload(
+            row,
+            starred=bool(row.get("already_starred")),
+            owned=bool(row.get("already_owned")),
+        )
+        items.append(item)
+    payload={
+        "status":result.get("status","OK"),
+        "period":period,
+        "language":language,
+        "repositories":items,
+        "items":items,
+        "source":lane.get("source"),
+        "refresh":result,
+    }
+    return payload
+
+def current_manual_file(home:Path,key:str,fmt:str):
+    mapped=GUI_MANUAL_ALIASES.get(key)
+    fmt=fmt.lower()
+    if not mapped or fmt not in MANUAL_FORMATS:
+        return None
+    cur=home/"manuals"/mapped/"CURRENT.json"
+    if not cur.exists():
+        generate_all(home)
+    if not cur.exists():
+        return None
+    info=json.loads(cur.read_text(encoding="utf-8"))
+    d=Path(info["path"])
+    matches=list(d.glob(f"*.{fmt}"))
+    return matches[0] if matches else None
+
+def repository_history(full_name:str,home:Path):
+    with connect(home) as con:
+        rows=[dict(r) for r in con.execute(
+            "SELECT period,language_filter,position,total_stars,forks,period_gain,captured_at,source_hash FROM trending_snapshots WHERE full_name=? ORDER BY captured_at DESC",
+            (full_name,),
+        )]
+        counts={p:sum(1 for r in rows if r["period"]==p) for p in ("daily","weekly","monthly")}
+        languages=sorted({r["language_filter"] for r in rows if r["language_filter"]})
+        best=min((r["position"] for r in rows),default=None)
+        rr=con.execute("SELECT repo_id FROM repositories WHERE full_name=?",(full_name,)).fetchone()
+        star=None
+        if rr:
+            sr=con.execute("SELECT starred_at FROM stars_current WHERE repo_id=?",(rr[0],)).fetchone()
+            star=sr[0] if sr else None
+        events=[dict(r) for r in con.execute(
+            "SELECT event_type,at,previous_json,current_json,evidence_ref FROM events WHERE object_key=? ORDER BY at DESC",
+            (full_name,),
+        )]
+    return {
+        "status":"OK",
+        "full_name":full_name,
+        "first_seen":rows[-1]["captured_at"] if rows else None,
+        "last_seen":rows[0]["captured_at"] if rows else None,
+        "daily_appearances":counts["daily"],
+        "weekly_appearances":counts["weekly"],
+        "monthly_appearances":counts["monthly"],
+        "best_rank":best,
+        "languages_seen_under":languages,
+        "operator_star_date":star,
+        "star_gain_history":[
+            {
+                "captured_at":r["captured_at"],
+                "period":r["period"],
+                "language":r["language_filter"],
+                "gain":r["period_gain"],
+            }
+            for r in rows
+        ],
+        "appearances":rows,
+        "events":events,
+    }
+
+def repository_compare(full_name:str,home:Path):
+    card=get_repository_card(full_name,home)
+    with connect(home) as con:
+        latest=[dict(r) for r in con.execute(
+            "SELECT period,language_filter,position,total_stars,forks,period_gain,captured_at FROM trending_snapshots WHERE full_name=? ORDER BY captured_at DESC LIMIT 20",
+            (full_name,),
+        )]
+        runtime=[dict(r) for r in con.execute(
+            "SELECT * FROM runtime_current WHERE remote LIKE ? ORDER BY probed_at DESC",
+            (f"%{full_name}%",),
+        )]
+    return {
+        "status":card.get("status","HOLD"),
+        "full_name":full_name,
+        "manual_card":card.get("card"),
+        "trending":latest,
+        "runtime":runtime,
+    }
 
 class Handler(BaseHTTPRequestHandler):
-    server_version="LokivelliRadar/0.1"
+    server_version="LokivelliRadar/0.3"
+
     def log_message(self,fmt,*args):
         ensure_layout(self.server.home)
-        with (self.server.home/"logs"/"server.log").open("a",encoding="utf-8") as f: f.write(f"{utcnow()} {self.address_string()} {fmt%args}\n")
+        with (self.server.home/"logs"/"server.log").open("a",encoding="utf-8") as f:
+            f.write(f"{utcnow()} {self.address_string()} {fmt%args}\n")
+
     def send_json(self,obj,status=200):
-        data=_json_bytes(obj); self.send_response(status); self.send_header("Content-Type","application/json; charset=utf-8"); self.send_header("Content-Length",str(len(data))); self.end_headers(); self.wfile.write(data)
+        data=_json_bytes(obj)
+        self.send_response(status)
+        self.send_header("Content-Type","application/json; charset=utf-8")
+        self.send_header("Content-Length",str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def send_file(self,p:Path,content_type=None,download_name=None):
+        data=p.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type",content_type or mimetypes.guess_type(str(p))[0] or "application/octet-stream")
+        if download_name:
+            self.send_header("Content-Disposition",f'attachment; filename="{download_name}"')
+        self.send_header("Content-Length",str(len(data)))
+        self.end_headers()
+        return self.wfile.write(data)
+
     def body(self):
-        n=int(self.headers.get("Content-Length","0") or 0); raw=self.rfile.read(n) if n else b"{}"; return json.loads(raw or b"{}")
+        n=int(self.headers.get("Content-Length","0") or 0)
+        raw=self.rfile.read(n) if n else b"{}"
+        return json.loads(raw or b"{}")
+
     def do_GET(self):
-        u=urlparse(self.path); q=parse_qs(u.query); home=self.server.home
+        u=urlparse(self.path)
+        q=parse_qs(u.query)
+        home=self.server.home
         try:
-            if u.path=="/api/dashboard": return self.send_json(dashboard(home,q.get("period",["daily"])[0],q.get("language",[""])[0]))
-            if u.path=="/api/search": return self.send_json({"results":search(q.get("q",[""])[0],home)})
-            if u.path=="/api/config": return self.send_json(load_config(home))
+            if u.path=="/healthz":
+                return self.send_json({
+                    "status":"LIVE",
+                    "service":"lokivelli-radar-http",
+                    "time":utcnow(),
+                    "home":str(home),
+                    "source_state":"SOURCE_PRESENT",
+                    "runtime_truth":"HTTP endpoint responded; this alone does not certify full phone acceptance",
+                })
+            if u.path=="/api/dashboard":
+                return self.send_json(dashboard(home,q.get("period",["daily"])[0],q.get("language",[""])[0]))
+            if u.path=="/api/search":
+                return self.send_json({"status":"OK","results":search(q.get("q",[""])[0],home)})
+            if u.path=="/api/config":
+                return self.send_json(load_config(home))
+            if u.path=="/api/trending":
+                period=q.get("since",q.get("period",["daily"]))[0]
+                language=q.get("language",[""])[0]
+                payload=gui_trending(period,language,home,refresh=True)
+                return self.send_json(payload,200 if payload["status"]=="OK" else 503)
+            if u.path=="/api/github/inventory":
+                refreshed=pull_inventory(home)
+                payload=gui_inventory(home)
+                payload["refresh"]=refreshed
+                payload["status"]=refreshed.get("status","HOLD")
+                if refreshed.get("user"):
+                    payload["user"]=refreshed["user"]
+                return self.send_json(payload,200 if payload["status"]=="OK" else 503)
+            if u.path=="/api/export/all":
+                r=export_everything(home)
+                r["download_url"]="/exports/"+Path(r["zip"]).name
+                return self.send_json(r,200 if r.get("status")=="OK" else 503)
+            if u.path=="/api/manual/current":
+                p=current_manual_file(home,q.get("key",[""])[0],q.get("format",["html"])[0])
+                if not p:
+                    return self.send_json({"status":"HOLD","error":"manual or format not found"},404)
+                return self.send_file(p,download_name=p.name)
+            if u.path=="/api/history":
+                return self.send_json(repository_history(q.get("full_name",[""])[0],home))
+            if u.path=="/api/compare":
+                return self.send_json(repository_compare(q.get("full_name",[""])[0],home))
+            if u.path=="/api/manual-card":
+                return self.send_json(get_repository_card(q.get("full_name",[""])[0],home))
+            if u.path=="/api/acceptance/latest":
+                with connect(home) as con:
+                    row=con.execute("SELECT result_json FROM acceptance_runs ORDER BY run_at DESC LIMIT 1").fetchone()
+                return self.send_json(json.loads(row[0]) if row else {"status":"HOLD","error":"No acceptance run recorded"})
             if u.path=="/api/receipts":
                 files=sorted((home/"evidence"/"receipts").glob("*.json"),reverse=True)[:100]
                 return self.send_json({"receipts":[json.loads(p.read_text()) for p in files]})
             if u.path.startswith("/exports/"):
-                p=(home/"exports"/Path(u.path).name).resolve(); root=(home/"exports").resolve()
-                if not str(p).startswith(str(root)+os.sep) or not p.exists(): return self.send_error(404)
-                data=p.read_bytes(); self.send_response(200); self.send_header("Content-Type","application/zip"); self.send_header("Content-Disposition",f'attachment; filename="{p.name}"'); self.send_header("Content-Length",str(len(data))); self.end_headers(); return self.wfile.write(data)
+                p=(home/"exports"/Path(u.path).name).resolve()
+                root=(home/"exports").resolve()
+                if not str(p).startswith(str(root)+os.sep) or not p.exists():
+                    return self.send_error(404)
+                return self.send_file(p,"application/zip",p.name)
             if u.path.startswith("/manual-file/"):
-                rel=u.path[len("/manual-file/"):]; p=(home/"manuals"/rel).resolve(); root=(home/"manuals").resolve()
-                if not str(p).startswith(str(root)+os.sep) or not p.exists(): return self.send_error(404)
-                data=p.read_bytes(); self.send_response(200); self.send_header("Content-Type",mimetypes.guess_type(str(p))[0] or "application/octet-stream"); self.send_header("Content-Length",str(len(data))); self.end_headers(); return self.wfile.write(data)
+                rel=u.path[len("/manual-file/"):]
+                p=(home/"manuals"/rel).resolve()
+                root=(home/"manuals").resolve()
+                if not str(p).startswith(str(root)+os.sep) or not p.exists():
+                    return self.send_error(404)
+                return self.send_file(p)
+
             path="index.html" if u.path in {"/","/index.html"} else u.path.lstrip("/")
             p=(STATIC/path).resolve()
-            if not str(p).startswith(str(STATIC.resolve())+os.sep) or not p.exists(): return self.send_error(404)
-            data=p.read_bytes(); self.send_response(200); self.send_header("Content-Type",mimetypes.guess_type(str(p))[0] or "application/octet-stream"); self.send_header("Cache-Control","no-cache"); self.send_header("Content-Length",str(len(data))); self.end_headers(); self.wfile.write(data)
+            root=STATIC.resolve()
+            if not str(p).startswith(str(root)+os.sep) or not p.exists():
+                return self.send_error(404)
+            data=p.read_bytes()
+            if path=="index.html":
+                marker=b'<script src="/wiring.js"></script>'
+                if marker not in data:
+                    data=data.replace(b"</body>",marker+b"\n</body>",1)
+            self.send_response(200)
+            self.send_header("Content-Type",mimetypes.guess_type(str(p))[0] or "application/octet-stream")
+            self.send_header("Cache-Control","no-cache")
+            self.send_header("Content-Length",str(len(data)))
+            self.end_headers()
+            return self.wfile.write(data)
         except Exception as e:
             return self.send_json({"status":"HOLD","error":str(e)},500)
+
     def do_POST(self):
-        u=urlparse(self.path); home=self.server.home
+        u=urlparse(self.path)
+        home=self.server.home
         try:
             b=self.body()
-            if u.path=="/api/refresh": return self.send_json(run_once(home,full_languages=bool(b.get("full_languages"))))
-            if u.path=="/api/github": return self.send_json(pull_inventory(home))
-            if u.path=="/api/trending": return self.send_json(acquire(b.get("period","daily"),b.get("language") or None,home))
-            if u.path=="/api/trending/sweep": return self.send_json(sweep(home,priority_only=bool(b.get("priority_only"))))
-            if u.path=="/api/discover": return self.send_json(discover(home))
-            if u.path=="/api/runtime/register": return self.send_json(register_runtime(b["path"],b.get("runtime_port"),b.get("health_endpoint"),b.get("source_status","SOURCE_PRESENT"),b.get("phone_status","DISCOVERED"),home))
-            if u.path=="/api/manuals": return self.send_json(generate_all(home))
-            if u.path=="/api/export":
-                r=export_everything(home); r["download_url"]="/exports/"+Path(r["zip"]).name; return self.send_json(r)
-            if u.path=="/api/star": return self.send_json(set_star(b["full_name"],True,home))
-            if u.path=="/api/unstar": return self.send_json(set_star(b["full_name"],False,home))
-            if u.path=="/api/readme": return self.send_json(audit_readme(b["full_name"],home))
+            if u.path=="/api/refresh":
+                return self.send_json(run_once(home,full_languages=b.get("full_languages",True) is not False))
+            if u.path=="/api/github":
+                return self.send_json(pull_inventory(home))
+            if u.path=="/api/trending":
+                return self.send_json(acquire(b.get("period","daily"),b.get("language") or None,home))
+            if u.path=="/api/trending/sweep":
+                return self.send_json(sweep(home,priority_only=bool(b.get("priority_only"))))
+            if u.path in {"/api/discover","/api/runtime/discover"}:
+                return self.send_json(discover(home,b.get("roots") if u.path=="/api/runtime/discover" else None))
+            if u.path=="/api/runtime/health":
+                return self.send_json(discover(home,b.get("roots")))
+            if u.path=="/api/runtime/register":
+                return self.send_json(register_runtime(
+                    b["path"],
+                    b.get("runtime_port"),
+                    b.get("health_endpoint"),
+                    b.get("source_status","SOURCE_PRESENT"),
+                    b.get("phone_status","DISCOVERED"),
+                    b.get("service_name"),
+                    home,
+                ))
+            if u.path=="/api/runtime/transition":
+                return self.send_json(transition_runtime(b["path"],b["phone_status"],b.get("last_verified_operation"),home))
+            if u.path=="/api/manuals":
+                return self.send_json(generate_all(home))
+            if u.path in {"/api/export","/api/export/all"}:
+                r=export_everything(home)
+                r["download_url"]="/exports/"+Path(r["zip"]).name
+                return self.send_json(r)
+            if u.path=="/api/star":
+                return self.send_json(set_star(b["full_name"],True,home))
+            if u.path=="/api/unstar":
+                return self.send_json(set_star(b["full_name"],False,home))
+            if u.path=="/api/readme":
+                return self.send_json(audit_readme(b["full_name"],home))
             if u.path=="/api/note":
                 with connect(home) as con:
-                    con.execute("INSERT OR REPLACE INTO notes(namespace,object_key,note,updated_at) VALUES(?,?,?,?)",(b.get("namespace","repo"),b["object_key"],b.get("note",""),utcnow()))
-                return self.send_json({"status":"OK"})
+                    con.execute(
+                        "INSERT OR REPLACE INTO notes(namespace,object_key,note,updated_at) VALUES(?,?,?,?)",
+                        (b.get("namespace","repo"),b["object_key"],b.get("note",""),utcnow()),
+                    )
+                receipt=write_receipt(
+                    "note.save",
+                    inputs={"namespace":b.get("namespace","repo"),"object_key":b["object_key"]},
+                    result={"saved":True},
+                    home=home,
+                )
+                return self.send_json({"status":"OK","receipt":receipt})
             if u.path=="/api/config/languages":
-                cfg=load_config(home); cfg["languages"]=b["languages"]; save_config(cfg,home); write_receipt("config.languages.update",result={"count":len(cfg["languages"])},home=home); return self.send_json({"status":"OK","languages":cfg["languages"]})
-            if u.path=="/api/workaround": return self.send_json(record_workaround(b["original_target"],b["original_blocker"],b["failed_gate"],b.get("attempt_history",[]),b.get("workaround_chain",[]),b.get("bypass_point"),b.get("behavioral_differences",[]),b.get("remaining_limitations",[]),b.get("rollback_path"),b.get("verification_result"),home))
-            if u.path=="/api/update/backup": return self.send_json(backup_state(home))
-            if u.path=="/api/update/check": return self.send_json(check_update(Path(b.get("source_dir") or Path(__file__).resolve().parents[1])))
-            if u.path=="/api/update/verify": return self.send_json(verify_source(Path(b.get("source_dir") or Path(__file__).resolve().parents[1])))
-            if u.path=="/api/update/apply": return self.send_json(upgrade(Path(b.get("source_dir") or Path(__file__).resolve().parents[1]),home))
-            if u.path=="/api/update/rollback": return self.send_json(rollback(Path(b["backup_path"]),home))
-            if u.path=="/api/manual/predecessor": return self.send_json(import_predecessor(Path(b["path"]),b["manual_key"],home))
+                cfg=load_config(home)
+                cfg["languages"]=b["languages"]
+                save_config(cfg,home)
+                write_receipt("config.languages.update",result={"count":len(cfg["languages"])},home=home)
+                return self.send_json({"status":"OK","languages":cfg["languages"]})
+            if u.path=="/api/config/runtime-roots":
+                cfg=load_config(home)
+                cfg["termux_roots"]=[str(x) for x in b.get("roots",[])]
+                save_config(cfg,home)
+                write_receipt("config.runtime_roots.update",result={"count":len(cfg["termux_roots"])},home=home)
+                return self.send_json({"status":"OK","roots":cfg["termux_roots"]})
+            if u.path=="/api/workaround":
+                return self.send_json(record_workaround(
+                    b["original_target"],
+                    b["original_blocker"],
+                    b["failed_gate"],
+                    b.get("attempt_history",[]),
+                    b.get("workaround_chain",[]),
+                    b.get("bypass_point"),
+                    b.get("behavioral_differences",[]),
+                    b.get("remaining_limitations",[]),
+                    b.get("rollback_path"),
+                    b.get("verification_result"),
+                    home,
+                ))
+            if u.path=="/api/acceptance":
+                return self.send_json(run_acceptance(
+                    home,
+                    Path(b.get("source_dir")) if b.get("source_dir") else None,
+                    b.get("network_refresh",True),
+                ))
+            if u.path=="/api/device-acceptance":
+                return self.send_json(save_device_acceptance(b,home))
+            if u.path=="/api/update/backup":
+                return self.send_json(backup_state(home))
+            if u.path=="/api/update/check":
+                return self.send_json(check_update(Path(b.get("source_dir") or Path(__file__).resolve().parents[1])))
+            if u.path=="/api/update/migrate":
+                return self.send_json(migrate_database(home))
+            if u.path=="/api/update/verify":
+                return self.send_json(verify_source(Path(b.get("source_dir") or Path(__file__).resolve().parents[1])))
+            if u.path=="/api/update/apply":
+                return self.send_json(upgrade(Path(b.get("source_dir") or Path(__file__).resolve().parents[1]),home))
+            if u.path=="/api/update/rollback":
+                return self.send_json(rollback(Path(b["backup_path"]),home))
+            if u.path=="/api/manual/predecessor":
+                return self.send_json(import_predecessor(Path(b["path"]),b["manual_key"],home))
             return self.send_error(404)
         except Exception as e:
             return self.send_json({"status":"HOLD","error":str(e),"trace":traceback.format_exc(limit=3)},500)
 
 def serve(home:Path=APP_HOME,bind=None,port=None):
-    cfg=load_config(home); bind=bind or cfg.get("bind","127.0.0.1"); port=int(port or cfg.get("port",8765))
-    httpd=ThreadingHTTPServer((bind,port),Handler); httpd.home=home
-    write_receipt("runtime.health",result={"service":"local-http","bind":bind,"port":port,"state":"STARTING"},home=home)
+    cfg=load_config(home)
+    bind=bind or cfg.get("bind","127.0.0.1")
+    port=int(port or cfg.get("port",8765))
+    httpd=ThreadingHTTPServer((bind,port),Handler)
+    httpd.home=home
+    write_receipt(
+        "runtime.health",
+        result={"service":"local-http","bind":bind,"port":port,"state":"STARTING"},
+        home=home,
+    )
     print(f"Lokivelli Radar: http://{bind}:{port}")
-    try: httpd.serve_forever()
-    finally: httpd.server_close()
+    try:
+        httpd.serve_forever()
+    finally:
+        httpd.server_close()

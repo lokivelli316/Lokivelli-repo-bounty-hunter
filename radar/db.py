@@ -22,11 +22,13 @@ CREATE TABLE IF NOT EXISTS repositories(
   description TEXT,
   primary_language TEXT,
   topics_json TEXT,
+  license_spdx TEXT,
   created_at TEXT,
   updated_at TEXT,
   pushed_at TEXT,
   archived INTEGER NOT NULL DEFAULT 0,
   homepage TEXT,
+  github_present INTEGER NOT NULL DEFAULT 1,
   source_status TEXT,
   phone_status TEXT,
   checkout TEXT,
@@ -59,6 +61,29 @@ CREATE TABLE IF NOT EXISTS star_snapshots(
   starred_at TEXT,
   captured_at TEXT NOT NULL,
   PRIMARY KEY(snapshot_id, repo_id)
+);
+CREATE TABLE IF NOT EXISTS favorite_state(
+  repo_id INTEGER PRIMARY KEY,
+  first_seen_in_manual TEXT,
+  readme_audit_state TEXT NOT NULL DEFAULT 'NOT_AUDITED',
+  documented_checkout TEXT,
+  documented_setup TEXT,
+  platform_notes TEXT,
+  operator_classification TEXT,
+  operator_notes TEXT,
+  tested_on_phone INTEGER NOT NULL DEFAULT 0,
+  installed_on_phone INTEGER NOT NULL DEFAULT 0,
+  adopted_into_stack INTEGER NOT NULL DEFAULT 0,
+  related_owned_repos_json TEXT NOT NULL DEFAULT '[]',
+  related_favorites_json TEXT NOT NULL DEFAULT '[]',
+  FOREIGN KEY(repo_id) REFERENCES repositories(repo_id)
+);
+CREATE TABLE IF NOT EXISTS fork_state(
+  repo_id INTEGER PRIMARY KEY,
+  upstream_status TEXT,
+  local_modifications TEXT,
+  adoption_state TEXT,
+  FOREIGN KEY(repo_id) REFERENCES repositories(repo_id)
 );
 CREATE TABLE IF NOT EXISTS trending_snapshots(
   snapshot_id TEXT NOT NULL,
@@ -154,17 +179,45 @@ CREATE TABLE IF NOT EXISTS manual_versions(
   evidence_json TEXT,
   PRIMARY KEY(manual_key, version_id)
 );
+CREATE TABLE IF NOT EXISTS acceptance_runs(
+  run_id TEXT PRIMARY KEY,
+  run_at TEXT NOT NULL,
+  status TEXT NOT NULL,
+  completed_json TEXT NOT NULL,
+  failed_json TEXT NOT NULL,
+  blocker_json TEXT NOT NULL,
+  result_json TEXT NOT NULL
+);
 '''
+
+MIGRATION_COLUMNS = {
+    "repositories": {
+        "license_spdx": "TEXT",
+        "github_present": "INTEGER NOT NULL DEFAULT 1",
+    }
+}
 
 def db_path(home: Path = APP_HOME) -> Path:
     ensure_layout(home)
     return home / "db" / "radar.sqlite3"
+
+def migrate_connection(con: sqlite3.Connection) -> list[str]:
+    applied=[]
+    for table, columns in MIGRATION_COLUMNS.items():
+        existing={r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+        for name, ddl in columns.items():
+            if name not in existing:
+                con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+                applied.append(f"{table}.{name}")
+    con.executescript(SCHEMA)
+    return applied
 
 @contextmanager
 def connect(home: Path = APP_HOME):
     con = sqlite3.connect(db_path(home))
     con.row_factory = sqlite3.Row
     con.executescript(SCHEMA)
+    migrate_connection(con)
     try:
         yield con
         con.commit()

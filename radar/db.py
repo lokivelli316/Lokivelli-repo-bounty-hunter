@@ -85,6 +85,22 @@ CREATE TABLE IF NOT EXISTS fork_state(
   adoption_state TEXT,
   FOREIGN KEY(repo_id) REFERENCES repositories(repo_id)
 );
+CREATE TABLE IF NOT EXISTS preservation_state(
+  repo_id INTEGER PRIMARY KEY,
+  requested_json TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'UNPLANNED',
+  fork_full_name TEXT,
+  private_mirror_full_name TEXT,
+  mirror_path TEXT,
+  bundle_path TEXT,
+  upstream_head TEXT,
+  last_preserved_at TEXT,
+  last_verified_at TEXT,
+  source_present INTEGER NOT NULL DEFAULT 1,
+  verification_json TEXT NOT NULL DEFAULT '{}',
+  notes TEXT,
+  FOREIGN KEY(repo_id) REFERENCES repositories(repo_id)
+);
 CREATE TABLE IF NOT EXISTS trending_snapshots(
   snapshot_id TEXT NOT NULL,
   period TEXT NOT NULL,

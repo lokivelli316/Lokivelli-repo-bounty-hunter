@@ -2,6 +2,8 @@
 set -euo pipefail
 
 APP_HOME="${LOKIVELLI_RADAR_HOME:-$HOME/lokivelli-radar}"
+export SVDIR="$PREFIX/var/service"
+export LOGDIR="$PREFIX/var/log"
 printf 'APP_HOME=%s\n' "$APP_HOME"
 command -v python >/dev/null && python --version || true
 command -v git >/dev/null && git --version || true
@@ -19,6 +21,12 @@ else
 fi
 
 if command -v sv >/dev/null 2>&1; then
-  sv status lokivelli-radar 2>/dev/null || true
-  sv status lokivelli-radar-scheduler 2>/dev/null || true
+  sv status "$SVDIR/lokivelli-radar" 2>/dev/null || true
+  sv status "$SVDIR/lokivelli-radar-scheduler" 2>/dev/null || true
+fi
+
+for pf in "$APP_HOME/var/http-install-fallback.pid" "$APP_HOME/var/scheduler-install-fallback.pid"; do
+  if [ -s "$pf" ] && kill -0 "$(cat "$pf")" 2>/dev/null; then
+    printf 'FALLBACK_PROCESS=RUNNING pid=%s file=%s\n' "$(cat "$pf")" "$pf"
+  fi
 fi

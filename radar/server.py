@@ -17,6 +17,7 @@ from .history import import_predecessor
 from .update import backup_state, check_update, migrate_database, verify_source, upgrade, rollback
 from .acceptance import run_acceptance, save_device_acceptance
 from .db import connect
+from .preservation import preserve, preserve_planned, preservation_status, set_preservation_plan
 
 STATIC=Path(__file__).resolve().parents[1]/"static"
 GUI_MANUAL_ALIASES={
@@ -280,6 +281,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(repository_compare(q.get("full_name",[""])[0],home))
             if u.path=="/api/manual-card":
                 return self.send_json(get_repository_card(q.get("full_name",[""])[0],home))
+            if u.path=="/api/preservation/status":
+                return self.send_json(preservation_status(q.get("full_name",[""])[0],home))
             if u.path=="/api/acceptance/latest":
                 with connect(home) as con:
                     row=con.execute("SELECT result_json FROM acceptance_runs ORDER BY run_at DESC LIMIT 1").fetchone()
@@ -361,6 +364,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(set_star(b["full_name"],False,home))
             if u.path=="/api/readme":
                 return self.send_json(audit_readme(b["full_name"],home))
+            if u.path=="/api/preservation/plan":
+                return self.send_json(set_preservation_plan(b["full_name"],b.get("actions",[]),home))
+            if u.path=="/api/preservation/run":
+                return self.send_json(preserve(b["full_name"],b.get("actions"),home))
+            if u.path=="/api/preservation/sweep":
+                return self.send_json(preserve_planned(home))
             if u.path=="/api/note":
                 with connect(home) as con:
                     con.execute(

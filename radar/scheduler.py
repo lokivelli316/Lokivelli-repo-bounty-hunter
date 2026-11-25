@@ -8,6 +8,7 @@ from .trending import acquire
 from .termux import discover
 from .manuals import generate_all
 from .receipts import write_receipt
+from .preservation import preserve_planned
 
 def _cron_field(field,val):
     if field=='*': return True
@@ -59,6 +60,7 @@ def daemon(home:Path=APP_HOME,interval_seconds=30):
         if schedule_due(polling.get('trending_all','daily'),now): jobs.append(('trending-all',None))
         if schedule_due(polling.get('manual_delta','daily'),now): jobs.append(('manuals',None))
         if schedule_due(polling.get('complete_language_sweep','weekly'),now): jobs.append(('complete-language-sweep',None))
+        if schedule_due(polling.get('preservation_sweep','manual'),now): jobs.append(('preservation-sweep',None))
         for x in cfg.get('languages',[]):
             if x.get('enabled') and schedule_due(x.get('polling','weekly'),now): jobs.append(('language',x['slug']))
         for job,arg in jobs:
@@ -72,6 +74,7 @@ def daemon(home:Path=APP_HOME,interval_seconds=30):
                 elif job=='complete-language-sweep':
                     for x in cfg.get('languages',[]):
                         if x.get('enabled'): sweep_periods_for_language(home,x['slug'])
+                elif job=='preservation-sweep': preserve_planned(home)
             finally: executed.add(key)
         if now.hour==0 and now.minute==0: executed={x for x in executed if x[0].startswith(now.strftime('%Y-%m-%d'))}
         time.sleep(interval_seconds)

@@ -961,3 +961,64 @@ Then I can fix the rest.
   <strong>THE FORGE NEVER NEEDED PERMISSION TO GET HOT</strong><br>
   <strong>UNDERPROMISE · OVERBUILD · FIX FOREVER</strong>
 </p>
+
+---
+
+# OPTIONAL PRESERVATION VAULT
+
+Stars remain reconnaissance signals. Preservation is a separate operator decision.
+
+A starred repository can be promoted to any combination of:
+
+```text
+fork
+private_mirror
+local_mirror
+bundle
+full_archive
+```
+
+The preservation lane exists so a useful tool does not disappear merely because its upstream GitHub repository is deleted, renamed, force-pushed, archived, or abandoned.
+
+Default policy is deliberately manual:
+
+```json
+"preservation": {
+  "enabled": true,
+  "automatic_on_star": false
+}
+```
+
+Examples:
+
+```sh
+lokivelli-radar preserve-plan owner/repo bundle private_mirror
+lokivelli-radar preserve owner/repo
+lokivelli-radar preserve owner/repo --action full_archive
+lokivelli-radar preserve-status owner/repo
+lokivelli-radar preserve-sweep
+```
+
+Protection layers are independent:
+
+- `fork` creates the normal GitHub fork relationship when GitHub permits it.
+- `private_mirror` maintains a private repository copy under the authenticated account.
+- `local_mirror` keeps a non-pruning bare mirror under the Radar preservation root.
+- `bundle` writes a portable verified Git bundle and copies it to configured secondary roots.
+- `full_archive` adds LFS capture when available, release assets, and wiki capture in addition to the local mirror and bundle.
+
+Generated repository cards and manuals expose the requested actions, current preservation state, mirror path, bundle path, hashes, last verification time, and recovery evidence.
+
+If the upstream repository disappears, preservation state is not deleted. The Radar records either:
+
+```text
+UPSTREAM MISSING / PRESERVED COPY AVAILABLE
+```
+
+or:
+
+```text
+UPSTREAM MISSING / NO PRESERVED COPY
+```
+
+Unstarring does not delete preserved material.

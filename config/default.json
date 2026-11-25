@@ -6,29 +6,170 @@
     "trending_all": "daily",
     "priority_languages": "daily",
     "complete_language_sweep": "weekly",
-    "manual_delta": "daily"
+    "manual_delta": "daily",
+    "preservation_sweep": "manual"
   },
   "languages": [
-    {"name":"Python","slug":"python","enabled":true,"pinned":true,"order":1,"polling":"daily"},
-    {"name":"TypeScript","slug":"typescript","enabled":true,"pinned":true,"order":2,"polling":"daily"},
-    {"name":"JavaScript","slug":"javascript","enabled":true,"pinned":true,"order":3,"polling":"daily"},
-    {"name":"Rust","slug":"rust","enabled":true,"pinned":true,"order":4,"polling":"daily"},
-    {"name":"Go","slug":"go","enabled":true,"pinned":true,"order":5,"polling":"daily"},
-    {"name":"C++","slug":"c++","enabled":true,"pinned":false,"order":6,"polling":"weekly"},
-    {"name":"C","slug":"c","enabled":true,"pinned":false,"order":7,"polling":"weekly"},
-    {"name":"Kotlin","slug":"kotlin","enabled":true,"pinned":false,"order":8,"polling":"weekly"},
-    {"name":"Shell","slug":"shell","enabled":true,"pinned":false,"order":9,"polling":"weekly"},
-    {"name":"Swift","slug":"swift","enabled":true,"pinned":false,"order":10,"polling":"weekly"},
-    {"name":"C#","slug":"c#","enabled":true,"pinned":false,"order":11,"polling":"weekly"},
-    {"name":"Java","slug":"java","enabled":true,"pinned":false,"order":12,"polling":"weekly"},
-    {"name":"Dart","slug":"dart","enabled":true,"pinned":false,"order":13,"polling":"weekly"},
-    {"name":"PHP","slug":"php","enabled":true,"pinned":false,"order":14,"polling":"weekly"},
-    {"name":"Ruby","slug":"ruby","enabled":true,"pinned":false,"order":15,"polling":"weekly"},
-    {"name":"Zig","slug":"zig","enabled":true,"pinned":false,"order":16,"polling":"weekly"},
-    {"name":"Lua","slug":"lua","enabled":true,"pinned":false,"order":17,"polling":"weekly"},
-    {"name":"Elixir","slug":"elixir","enabled":true,"pinned":false,"order":18,"polling":"weekly"},
-    {"name":"Scala","slug":"scala","enabled":true,"pinned":false,"order":19,"polling":"weekly"},
-    {"name":"R","slug":"r","enabled":true,"pinned":false,"order":20,"polling":"weekly"}
+    {
+      "name": "Python",
+      "slug": "python",
+      "enabled": true,
+      "pinned": true,
+      "order": 1,
+      "polling": "daily"
+    },
+    {
+      "name": "TypeScript",
+      "slug": "typescript",
+      "enabled": true,
+      "pinned": true,
+      "order": 2,
+      "polling": "daily"
+    },
+    {
+      "name": "JavaScript",
+      "slug": "javascript",
+      "enabled": true,
+      "pinned": true,
+      "order": 3,
+      "polling": "daily"
+    },
+    {
+      "name": "Rust",
+      "slug": "rust",
+      "enabled": true,
+      "pinned": true,
+      "order": 4,
+      "polling": "daily"
+    },
+    {
+      "name": "Go",
+      "slug": "go",
+      "enabled": true,
+      "pinned": true,
+      "order": 5,
+      "polling": "daily"
+    },
+    {
+      "name": "C++",
+      "slug": "c++",
+      "enabled": true,
+      "pinned": false,
+      "order": 6,
+      "polling": "weekly"
+    },
+    {
+      "name": "C",
+      "slug": "c",
+      "enabled": true,
+      "pinned": false,
+      "order": 7,
+      "polling": "weekly"
+    },
+    {
+      "name": "Kotlin",
+      "slug": "kotlin",
+      "enabled": true,
+      "pinned": false,
+      "order": 8,
+      "polling": "weekly"
+    },
+    {
+      "name": "Shell",
+      "slug": "shell",
+      "enabled": true,
+      "pinned": false,
+      "order": 9,
+      "polling": "weekly"
+    },
+    {
+      "name": "Swift",
+      "slug": "swift",
+      "enabled": true,
+      "pinned": false,
+      "order": 10,
+      "polling": "weekly"
+    },
+    {
+      "name": "C#",
+      "slug": "c#",
+      "enabled": true,
+      "pinned": false,
+      "order": 11,
+      "polling": "weekly"
+    },
+    {
+      "name": "Java",
+      "slug": "java",
+      "enabled": true,
+      "pinned": false,
+      "order": 12,
+      "polling": "weekly"
+    },
+    {
+      "name": "Dart",
+      "slug": "dart",
+      "enabled": true,
+      "pinned": false,
+      "order": 13,
+      "polling": "weekly"
+    },
+    {
+      "name": "PHP",
+      "slug": "php",
+      "enabled": true,
+      "pinned": false,
+      "order": 14,
+      "polling": "weekly"
+    },
+    {
+      "name": "Ruby",
+      "slug": "ruby",
+      "enabled": true,
+      "pinned": false,
+      "order": 15,
+      "polling": "weekly"
+    },
+    {
+      "name": "Zig",
+      "slug": "zig",
+      "enabled": true,
+      "pinned": false,
+      "order": 16,
+      "polling": "weekly"
+    },
+    {
+      "name": "Lua",
+      "slug": "lua",
+      "enabled": true,
+      "pinned": false,
+      "order": 17,
+      "polling": "weekly"
+    },
+    {
+      "name": "Elixir",
+      "slug": "elixir",
+      "enabled": true,
+      "pinned": false,
+      "order": 18,
+      "polling": "weekly"
+    },
+    {
+      "name": "Scala",
+      "slug": "scala",
+      "enabled": true,
+      "pinned": false,
+      "order": 19,
+      "polling": "weekly"
+    },
+    {
+      "name": "R",
+      "slug": "r",
+      "enabled": true,
+      "pinned": false,
+      "order": 20,
+      "polling": "weekly"
+    }
   ],
   "termux_roots": [
     "$HOME",
@@ -40,5 +181,14 @@
   ],
   "health_timeout_seconds": 3,
   "retain_raw_trending_html": true,
-  "manual_history_mode": "append-only"
+  "manual_history_mode": "append-only",
+  "preservation": {
+    "enabled": true,
+    "automatic_on_star": false,
+    "root": "$HOME/lokivelli-radar/preservation",
+    "secondary_roots": [
+      "$HOME/storage/shared/LokivelliRepoArchive"
+    ],
+    "private_mirror_prefix": "archive-"
+  }
 }
